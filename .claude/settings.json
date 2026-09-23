@@ -15,7 +15,8 @@
       "Bash(git diff *)",
       "Bash(git log *)",
       "Bash(git add *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(.claude/hooks/log-reminder.sh)"
     ],
     "ask": [
       "Bash(curl *)",
@@ -31,6 +32,20 @@
       "Read(./.env.*)",
       "Edit(./docs/社内規程AI確認システムの開発仕様.md)",
       "Edit(./docs/2026-09-03_キックオフMTG議事録.md)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/log-reminder.sh",
+            "timeout": 10,
+            "statusMessage": "作業記録の記入を確認中"
+          }
+        ]
+      }
     ]
   }
 }
