@@ -1,6 +1,27 @@
 """横断的に使うデータ構造。dict を返り値にしないのは、キー名の揺れで後段が静かに壊るため。"""
 from __future__ import annotations
+import json
 from dataclasses import dataclass, field
+
+# PDF 座標の矩形 (left, bottom, right, top)。単位は pt、原点はページ左下
+Box = tuple[float, float, float, float]
+
+
+@dataclass
+class PdfLocation:
+    """原本PDFの中での位置（pdf_locate.py が取込時に特定する）。"""
+    pages: dict[int, list[Box]]   # ページ番号（0始まり）→ 色付けする矩形
+    highlighted: bool             # False: 条文の範囲は特定できたが、本文の位置までは特定できなかった
+
+    def to_json(self) -> str:
+        return json.dumps({"pages": {str(k): v for k, v in self.pages.items()},
+                           "highlighted": self.highlighted})
+
+    @classmethod
+    def from_json(cls, s: str) -> PdfLocation:
+        d = json.loads(s)
+        return cls(pages={int(k): [tuple(b) for b in v] for k, v in d["pages"].items()},
+                   highlighted=d["highlighted"])
 
 
 @dataclass
@@ -9,10 +30,11 @@ class Chunk:
     locator: str          # "第14条" / "第14条 表1 3行目"
     heading: str          # "（日当）" 条見出し。無ければ空
     body: str
-    kind: str             # "article" | "table_row"
+    kind: str             # "article" | "table"
     context: str = ""     # 所属条文の導入文。表の行に文脈を与えるために使う
     document_id: int = 0
     id: int = 0
+    pdf_loc: PdfLocation | None = None   # 原本PDFが無い、または特定できなかったときは None
 
     @property
     def search_text(self) -> str:

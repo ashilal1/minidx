@@ -35,7 +35,8 @@
 | 融合 | Reciprocal Rank Fusion、上位 k=5 |
 | 永続化 | SQLite 単一ファイル |
 | UI | Streamlit |
-| PDF抽出 | `pymupdf`（**OCRは実装しない**） |
+| 取込 | `python-docx`。**取込の正本は Word**（2026-10-02 決定。PDF からテキストは取り込まない） |
+| 原本表示 | `pypdfium2`。Word と同じ版の PDF を描画し、該当箇所に色を付けるだけ（`pymupdf` は AGPL のため不採用。**OCRは実装しない**） |
 | 公開 | Cloudflare Tunnel クイックトンネル（開発期間中のみ。納品形態ではない） |
 
 禁止事項:
@@ -55,7 +56,7 @@ app.py           Streamlit（社員タブ / 管理者タブ）
 config.yaml      閾値・k・モデル名などの可変パラメータ
 eval/            評価セット（回答可能15問 / 回答不能15問）と実行スクリプト
 tests/           pytest
-data/raw/        規程PDF（顧客機密・git管理外）
+regulations/     規程の Word と、同じ名前の原本表示用 PDF（顧客機密・git管理外）
 data/markdown/   抽出中間成果物。人が目視修正して再取込する（git管理外）
 data/minidx.db   SQLite（git管理外）
 ```
@@ -64,7 +65,7 @@ data/minidx.db   SQLite（git管理外）
 
 ```bash
 uv sync                                   # 依存導入（Python 3.12）
-uv run python -m minidx.ingest            # data/raw/*.pdf → Markdown → 条文DB
+uv run python -m minidx.ingest            # regulations/*.docx → Markdown → 条文DB（同名 PDF があれば原本上の位置も保存）
 uv run python -m minidx.ask "質問文"       # CLI で質疑応答（ゲート挙動の確認用）
 uv run python -m minidx.eval              # 評価セット実行。誤回答率を出す
 uv run pytest                             # テスト
