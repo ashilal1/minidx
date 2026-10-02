@@ -1,0 +1,27 @@
+[project]
+name = "minidx"
+version = "0.1.0"
+description = "社内規程AI確認システム — 根拠のない回答を仕組みとして出させない"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "python-docx>=1.2.0",   # MIT。実受領ファイルが .docx のため主役
+    "numpy>=2.0",
+    "rank-bm25>=0.2.2",     # Apache-2.0
+    "fugashi>=1.5.2",       # MIT AND BSD-3（MeCab同梱）
+    "unidic-lite>=1.0.8",
+    "pyyaml>=6.0",
+    "httpx>=0.27",          # Ollama への localhost 通信
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.uv]
+package = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/minidx"]

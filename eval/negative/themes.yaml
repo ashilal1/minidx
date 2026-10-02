@@ -1,0 +1,79 @@
+# 回答不能質問のテーマ一覧
+#
+# 「社内規程に記載がないが、社員が実際に聞きそうなこと」を集めたもの。
+# 無関係な質問（「今日の天気は」）では棄却ゲートの検証にならない（要件 §5.1）。
+#
+# ★重要★ ここに並ぶテーマが「規程に無い」ことは、現時点では**未検証の仮説**。
+#   規程15種を受領したら必ず全文検索で「本当に記載がないか」を確認し、
+#   記載があったテーマはこのファイルから削除すること。
+#   記載のあるテーマを回答不能質問に混ぜると、評価そのものが誤りになる。
+#
+# split の意味:
+#   calib   … 閾値の校正に使う。何度見てもよい
+#   holdout … 一度だけ測って封印する。**見た後に閾値を触ったら burned**（作り直し）
+#   テーマ単位で分割している（質問単位で割ると同じテーマが両方に入り、評価が甘くなるため）
+
+themes:
+  # ---------- 校正用（閾値調整に使う） ----------
+  - {id: remote-work,    split: calib, label: 在宅勤務・テレワーク,
+     questions: [在宅勤務のルールはありますか, テレワークは週に何日まで認められますか, 自宅で仕事をする場合の申請方法を教えてください]}
+  - {id: side-job,       split: calib, label: 副業・兼業,
+     questions: [副業は可能ですか, 兼業する場合に会社への届出は必要ですか, 休日にアルバイトをしても問題ありませんか]}
+  - {id: childcare-short, split: calib, label: 育児短時間勤務,
+     questions: [育児短時間勤務の適用範囲を教えてください, 子どもが小さいうちは時短勤務にできますか, 時短勤務は何歳まで利用できますか]}
+  - {id: nursing-care,   split: calib, label: 介護休業,
+     questions: [家族の介護で休むことはできますか, 介護休業は何日まで取得できますか, 介護のために勤務時間を短縮できますか]}
+  - {id: harassment,     split: calib, label: ハラスメント相談窓口,
+     questions: [ハラスメントの相談窓口はどこですか, パワハラを受けた場合どこに相談すればよいですか, セクハラの通報先を教えてください]}
+  - {id: qualification,  split: calib, label: 資格取得支援,
+     questions: [測量士の資格取得費用は会社が負担してくれますか, 資格手当はありますか, 研修の受講費用は補助されますか]}
+  - {id: company-car,    split: calib, label: 社用車の私的利用,
+     questions: [社用車を私用で使ってもよいですか, 社用車で通勤することは認められますか, 社用車のガソリン代は誰が負担しますか]}
+  - {id: mental-health,  split: calib, label: メンタルヘルス,
+     questions: [メンタル不調のときの相談先はありますか, ストレスチェックの結果は誰が見ますか, 気分が落ち込むときの相談は誰にすればよいですか]}
+  - {id: telework-allow, split: calib, label: 在宅勤務手当,
+     questions: [在宅勤務の光熱費は支給されますか, リモートワーク手当はありますか, 自宅の通信費は会社が負担しますか]}
+  - {id: discretionary,  split: calib, label: 裁量労働制,
+     questions: [裁量労働制は導入されていますか, フレックスタイム制は使えますか, コアタイムは何時から何時までですか]}
+  - {id: return-to-work, split: calib, label: 育休からの復職,
+     questions: [育休から復帰するときの手続きを教えてください, 復職後は元の部署に戻れますか, 育休中の社会保険料はどうなりますか]}
+  - {id: condolence-money, split: calib, label: 慶弔見舞金,
+     questions: [結婚したときにお祝い金は出ますか, 家族が亡くなった場合に弔慰金はありますか, 出産祝い金の金額を教えてください]}
+  - {id: employee-loan,  split: calib, label: 社内貸付,
+     questions: [社員向けの貸付制度はありますか, 会社からお金を借りることはできますか, 住宅購入時に会社の融資制度は使えますか]}
+  - {id: sns-policy,     split: calib, label: SNS・情報発信,
+     questions: [SNSに会社のことを投稿してもよいですか, 業務中の写真をSNSにあげても大丈夫ですか, 会社名を出してブログを書いてもよいですか]}
+  - {id: generative-ai,  split: calib, label: 生成AIの業務利用,
+     questions: [業務でChatGPTを使ってもよいですか, 生成AIの利用ルールはありますか, AIに社内資料を読み込ませても問題ないですか]}
+  - {id: byod,           split: calib, label: 私物端末の業務利用,
+     questions: [私物のパソコンを業務で使ってもよいですか, 個人のスマートフォンで会社のメールを見られますか, USBメモリの持ち込みは認められていますか]}
+  - {id: dress-code,     split: calib, label: 服装,
+     questions: [服装に決まりはありますか, クールビズの期間はいつからですか, 現場以外で作業着を着る必要はありますか]}
+  - {id: transfer-notice, split: calib, label: 異動・転勤の内示,
+     questions: [転勤の内示は何日前にもらえますか, 異動を断ることはできますか, 単身赴任の場合に手当は出ますか]}
+
+  # ---------- ホールドアウト用（封印。閾値確定後に一度だけ測る） ----------
+  - {id: rehire,         split: holdout, label: 定年後再雇用,
+     questions: [定年後に再雇用してもらえますか, 65歳を超えても働けますか, 再雇用後の給与はどうなりますか]}
+  - {id: dc-pension,     split: holdout, label: 企業年金・確定拠出年金,
+     questions: [確定拠出年金の制度はありますか, 企業年金に加入できますか, iDeCoと会社の制度は併用できますか]}
+  - {id: stock-plan,     split: holdout, label: 持株会・財形,
+     questions: [従業員持株会はありますか, 財形貯蓄の制度について教えてください, 給与天引きで積み立てはできますか]}
+  - {id: health-recheck, split: holdout, label: 健康診断の再検査,
+     questions: [健康診断の再検査費用は会社が負担しますか, 人間ドックの補助はありますか, 再検査で休む場合は有給を使いますか]}
+  - {id: commute-accident, split: holdout, label: 通勤中の事故,
+     questions: [通勤途中で事故にあった場合はどうなりますか, 通勤災害の手続きを教えてください, 通勤中のけがは労災になりますか]}
+  - {id: business-trip-accident, split: holdout, label: 出張中の事故・トラブル,
+     questions: [出張先で体調を崩したらどうすればよいですか, 出張中に事故にあった場合の連絡先はどこですか, 出張が中止になった場合のキャンセル料は誰が負担しますか]}
+  - {id: volunteer-leave, split: holdout, label: ボランティア休暇,
+     questions: [ボランティア休暇はありますか, 災害時のボランティアで休むことはできますか, 地域活動への参加は勤務扱いになりますか]}
+  - {id: birthday-leave, split: holdout, label: 特別休暇（記念日等）,
+     questions: [誕生日休暇はありますか, リフレッシュ休暇の制度はありますか, 勤続年数に応じた特別休暇はありますか]}
+  - {id: hourly-paid-leave, split: holdout, label: 有給の時間単位取得,
+     questions: [有給を1時間単位で取れますか, 半休は何時間単位ですか, 時間単位年休の上限を教えてください]}
+  - {id: whistleblowing, split: holdout, label: 内部通報,
+     questions: [内部通報の窓口はありますか, 不正を見つけた場合どこに報告しますか, 通報した人が不利益を受けない仕組みはありますか]}
+  - {id: smoking,        split: holdout, label: 喫煙,
+     questions: [社内に喫煙所はありますか, 勤務中にたばこを吸ってもよいですか, 現場での喫煙ルールを教えてください]}
+  - {id: personal-info,  split: holdout, label: 個人情報の取扱い,
+     questions: [顧客の個人情報を持ち帰ってもよいですか, 個人情報を扱う際のルールはありますか, 名簿を社外に持ち出す手続きはありますか]}
