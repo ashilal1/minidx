@@ -1,0 +1,14 @@
+# 認証が未実装の間は localhost のみで待ち受ける（docs/MVP要件定義.md §7.3）。
+# トンネル（cloudflared 等）は localhost に接続するため、この設定のままで公開できる。
+# 公開前にパスワードゲートを実装すること。
+[server]
+address = "localhost"
+port = 8501
+headless = true
+
+[browser]
+# 利用統計を外部へ送らない（規程本文・質問を外部に出さない方針。AGENTS.md §6）
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"

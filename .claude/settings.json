@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(uv sync *)",
+      "Bash(uv lock *)",
+      "Bash(uv add *)",
+      "Bash(uv run pytest *)",
+      "Bash(uv run ruff *)",
+      "Bash(uv run python -m minidx *)",
+      "Bash(uv run streamlit run *)",
+      "Bash(ollama list)",
+      "Bash(ollama show *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(.claude/hooks/log-reminder.sh)"
+    ],
+    "ask": [
+      "Bash(curl *)",
+      "Bash(wget *)",
+      "Bash(cloudflared *)",
+      "Bash(ollama pull *)",
+      "Bash(ollama rm *)",
+      "Bash(git push *)"
+    ],
+    "deny": [
+      "Read(./.streamlit/secrets.toml)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Edit(./docs/社内規程AI確認システムの開発仕様.md)",
+      "Edit(./docs/2026-09-03_キックオフMTG議事録.md)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/log-reminder.sh",
+            "timeout": 10,
+            "statusMessage": "作業記録の記入を確認中"
+          }
+        ]
+      }
+    ]
+  }
+}
