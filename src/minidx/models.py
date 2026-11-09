@@ -68,6 +68,7 @@ class Verdict:
     answer: str = ""
     citations: list[int] = field(default_factory=list)   # chunk.id
     citation_labels: list[str] = field(default_factory=list)   # 「規程名（改訂日） 条番号」。再取込後も追える
+    synonyms_applied: list[str] = field(default_factory=list)  # 言い換え対応表で置き換えた語（「泊まり→宿泊」）
     hits: list[Hit] = field(default_factory=list)
     top_cos: float = 0.0
     reason: str = ""

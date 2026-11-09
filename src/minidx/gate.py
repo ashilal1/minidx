@@ -122,51 +122,81 @@ class TableRow:
 def _table_rows(body: str, matcher: NumberMatcher, min_label_chars: int) -> list[TableRow]:
     """表チャンクの本文（1行1レコード、`列見出し: 値、列見出し: 値`）を行ごとに分解する。
 
-    数を含まないセルの値を行ラベルとみなす（例: 「職級: 部長」の「部長」）。
+    数を含まないセルの値を行ラベルとみなす（例: 「職級: 主任」の「主任」）。
     「社長・会長・役員」のように1セルに複数の名称がある場合は、各語もラベルにする。
+    セル全体の値は長さによらずラベルにする。職級を漢字1文字で略記した表が実在するため
+    （2026-11-09、旅費規程の表で2〜4行目が1文字。除外していたため照合が誤って棄却側に倒れた）。
+    「・」で区切った一部分は min_label_chars 以上だけをラベルにする（偶然の一致を避けるため）。
+    同じ行の文字のセルを順につないだものもラベルにする。職級名を2列に分けて書いた表
+    （1列目「主」・2列目「任」で「主任」）が実在するため。結合セルで同じ値が続く場合は1つにまとめる。
     """
     rows = []
     for line in body.splitlines():
         labels: set[str] = set()
+        texts: list[str] = []
         for cell in line.split("、"):
             _, _, value = cell.partition(": ")
             value = matcher.normalize(value or cell)
             if not value or matcher.find(value):
                 continue
-            for term in {value, *re.split(r"[・/／]", value)}:
+            if not texts or texts[-1] != value:
+                texts.append(value)
+            labels.add(value)
+            for term in re.split(r"[・/／]", value):
                 if len(term) >= min_label_chars:
                     labels.add(term)
+        if len(texts) > 1:
+            labels.add("".join(texts))
         rows.append(TableRow(labels=labels, quantities=matcher.quantities(line)))
     return rows
 
 
-def _check_table_rows(answer_norm: str, rows: list[TableRow], matcher: NumberMatcher) -> str:
-    """回答中の数ごとに、直前に書かれた行ラベルと同じ行にその数があるかを確かめる。
+# 回答を「区分ごとの記述」に区切る文字。カンマは「数字,数字3桁」（9,999）のときだけ3桁区切りとみなし、
+# それ以外は区切りとして扱う。小型モデルは全角カンマ「，」で区分を並べることがあり、正規化（NFKC）で「,」になるため
+# （2026-11-09: 当初はカンマで区切らず、回答全体が1つの区切りになって誤って棄却側に倒れていた）
+_SEGMENT_RE = re.compile(r"[、。;\n]|(?<!\d),|,(?!\d{3}(?!\d))")
 
+
+def _labels_in(segment: str, all_labels: list[str]) -> set[str]:
+    """区切りの中に現れる行ラベル。長いラベルから順に取り、その範囲に含まれる短いラベルは数えない
+    （「社長」の中の「長」や、「主任技師」の中の「技師」を別の区分として拾わないため）。"""
+    covered = [False] * len(segment)
+    found: set[str] = set()
+    for lb in all_labels:                       # all_labels は長い順
+        start = segment.find(lb)
+        while start >= 0:
+            end = start + len(lb)
+            if not any(covered[start:end]):
+                found.add(lb)
+                for i in range(start, end):
+                    covered[i] = True
+            start = segment.find(lb, start + 1)
+    return found
+
+
+def _check_table_rows(answer_norm: str, rows: list[TableRow], matcher: NumberMatcher) -> str:
+    """回答を読点・句点で区切り、区切りの中の数と行ラベルが表の同じ行にあるかを確かめる。
+
+    - 区切りの中のすべての行ラベルについて、その行にその数がなければ棄却する
+      （「部長と課長は¥9,999」のようなまとめ書きは、片方の行に無ければ棄却側に倒れる）
     - 表のどの行にも無い数は対象外（条文側の数。数値照合で別に検証済み）
-    - 同じ文の中で数より前にラベルが無ければ対象外（行を特定する手がかりが無い）
-    - 「主任と係員は¥9,999」のようなまとめ書きは、直前の「係員」で照合されるため棄却側に倒れる（許容）
+    - 区切りの中に行ラベルが無ければ対象外（行を特定する手がかりが無い）
+    - 「¥9,999（主任）」のように数が先、ラベルが後に書かれても同じ区切りの中なら照合できる
+      （2026-11-09: 当初は「数の直前のラベル」だけを見ており、この書き方を誤って棄却していた）
     戻り値: 問題があれば理由、無ければ空文字
     """
     table_qs = {q for r in rows for q in r.quantities}
     all_labels = sorted({lb for r in rows for lb in r.labels}, key=len, reverse=True)
     if not all_labels:
         return ""
-    for m in matcher.find(answer_norm):
-        if m.quantity not in table_qs:
+    for segment in _SEGMENT_RE.split(answer_norm):
+        qs = [m.quantity for m in matcher.find(segment) if m.quantity in table_qs]
+        if not qs:
             continue
-        sentence_start = max(answer_norm.rfind(sep, 0, m.start) for sep in "。\n") + 1
-        head = answer_norm[sentence_start:m.start]
-        # 数の直前に最も近いラベル（長いラベルを優先し、「一般社員」の中の「社員」を拾わない）
-        best, best_end = "", -1
-        for lb in all_labels:
-            pos = head.rfind(lb)
-            if pos >= 0 and pos + len(lb) > best_end:
-                best, best_end = lb, pos + len(lb)
-        if not best:
-            continue
-        if not any(best in r.labels and m.quantity in r.quantities for r in rows):
-            return f"回答中の「{best}」と {m.quantity.value}{m.quantity.unit} が表の同じ行にない"
+        for lb in _labels_in(segment, all_labels):
+            for q in qs:
+                if not any(lb in r.labels and q in r.quantities for r in rows):
+                    return f"回答中の「{lb}」と {q.value}{q.unit} が表の同じ行にない"
     return ""
 
 
@@ -178,7 +208,7 @@ def gate2(llm_out: dict, hits: list[Hit], matcher: NumberMatcher,
     2. citation_ids が渡した集合の範囲内か（enum制約に加えて実装側でも必ず確認する。
        スキーマを信用して検証を省くと、モデルや実行基盤を替えたときに静かに穴が開く）
     3. 回答中の単位付きの数（円・日・か月・年・回・時間 など）が、引用した条文の中に実在するか
-    4. 引用に表がある場合、回答中の数と、その直前に書かれた行ラベルが表の同じ行にあるか
+    4. 引用に表がある場合、回答を読点・句点で区切った各部分で、数と行ラベルが表の同じ行にあるか
 
     3・4が関連性の検証を担う。当初は逐語引用の部分文字列照合で検証する設計だったが、
     実測で qwen2.5:7b が逐語コピーをしないことが判明したため数値照合に切り替えた。

@@ -1,16 +1,14 @@
-"""Streamlit 画面。社員タブ（質問する）と管理者タブ（質問ログ・取込状況）。
+"""Streamlit 社員画面（質問する）。管理画面は admin.py（2026-11-09 論点7で別アプリに分離）。
 
 起動: uv run streamlit run app.py
+  社内 LAN で使うときは --server.address 0.0.0.0 を付ける（既定は .streamlit/config.toml の localhost）。
 
 ★認証は未実装。2026-10-02 のユーザー判断で、ローカル動作の間はログインなしで画面を出す。
   トンネルで公開する前に docs/MVP要件定義.md §7.3 のパスワードゲート（社員用／管理者用を分ける）を
   必ず入れること。それまでは .streamlit/config.toml で localhost のみにバインドしている。
 """
 from __future__ import annotations
-import csv
-import io
 import logging
-import re
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,14 +16,12 @@ from pathlib import Path
 import httpx
 import streamlit as st
 
-from minidx import db
-from minidx.config import load
 from minidx.models import Box, PdfLocation
 from minidx.pdf_locate import render_page
 from minidx.pipeline import NOT_FOUND_MESSAGE, Pipeline
+from minidx.ui import cfg, citation_title, corpus_signature, plain
 
 log = logging.getLogger(__name__)
-cfg = load()
 
 # 待ち表示の文言。Pipeline.ask の on_step が通知する段階に対応する
 STEP_LABELS = {
@@ -33,19 +29,6 @@ STEP_LABELS = {
     "generate": "条文をもとに回答を作成しています…",
     "verify": "回答の根拠を検証しています…",
 }
-
-# 管理者画面の判定表示。棄却理由は統合せずに分けて見せる（要件 §3.8）
-VERDICT_LABELS = {
-    "answered": "回答",
-    "rejected_low_score": "棄却（類似度不足）",
-    "rejected_no_vocab": "棄却（規程に無い語）",
-    "rejected_insufficient": "棄却（LLMが根拠不足と申告）",
-    "rejected_bad_citation": "棄却（引用の検証に失敗）",
-    "rejected_bad_number": "棄却（回答の数が条文に無い）",
-    "rejected_table_row": "棄却（表の行の取り違え）",
-    "rejected_generation_error": "棄却（生成の失敗・時間切れ）",
-}
-
 
 @dataclass
 class Card:
@@ -64,11 +47,16 @@ class Shown:
     answer: str = ""
     cards: list[Card] = field(default_factory=list)
     error: bool = False
+    synonyms_applied: list[str] = field(default_factory=list)
 
 
-@st.cache_resource
-def get_pipeline() -> Pipeline:
-    """条文・埋め込み・BM25 索引はプロセスで1つだけ持つ。再取込後は管理者タブから読み直す。"""
+@st.cache_resource(max_entries=1)
+def _pipeline(signature: str) -> Pipeline:
+    """条文・埋め込み・BM25 索引はプロセスで1つだけ持つ。
+
+    signature（登録済み規程の件数と最新の取込日時）が変わったら作り直す。管理画面を別アプリに分けたため、
+    再取込を管理画面のボタンで知らせる代わりに、社員画面が DB の変化を見て自動で読み直す（論点7）。
+    """
     p = Pipeline()
     try:
         p.client.warmup()   # 論点4: 社員の最初の質問で読み込みを待たせない
@@ -77,45 +65,20 @@ def get_pipeline() -> Pipeline:
     return p
 
 
+def get_pipeline() -> Pipeline:
+    return _pipeline(corpus_signature())
+
+
 @st.cache_resource
 def get_lock() -> threading.Lock:
     """質問の処理を直列化する。8GB 機では LLM の同時実行でメモリが溢れ、SQLite 接続も共有しているため。"""
     return threading.Lock()
 
 
-_MD_SPECIAL = re.compile(r"([\\`*_{}\[\]()#+\-.!|~$<>])")
-
-
-def plain(text: str) -> str:
-    """LLM の出力や条文を Markdown として解釈させずに表示する。
-
-    `~` が取り消し線に、`$` が数式になるなど、原文と違う見た目になるのを防ぐ。改行は保持する。
-    """
-    return _MD_SPECIAL.sub(r"\\\1", text).replace("\n", "  \n")
-
-
-def to_csv(rows: list[dict]) -> bytes:
-    """Excel でそのまま開けるよう BOM 付き UTF-8 にする。"""
-    if not rows:
-        return b""
-    buf = io.StringIO()
-    w = csv.DictWriter(buf, fieldnames=list(rows[0]))
-    w.writeheader()
-    w.writerows(rows)
-    return buf.getvalue().encode("utf-8-sig")
-
-
 @st.cache_data(max_entries=64)
 def page_image(pdf: str, mtime: float, page_no: int, boxes: tuple[Box, ...]) -> bytes:
     """原本の1ページを描画する。mtime をキーに含め、PDF を差し替えたら描き直す。"""
     return render_page(Path(pdf), page_no, list(boxes), cfg["source_view"]["render_scale"])
-
-
-def citation_title(p: Pipeline, chunk_id: int) -> str:
-    """再取込で条文IDが振り直されると、過去ログの引用先は消える。その場合も落とさずに表示する。"""
-    if chunk_id not in p.chunks_by_id:
-        return f"（再取込で削除された条文 #{chunk_id}）"
-    return p.citation_label(chunk_id)
 
 
 # --- 社員タブ ---
@@ -148,16 +111,21 @@ def ask(question: str) -> Shown:
 
     if not v.answered:
         # 未整備判定では参考条文を出さない（要件 §3.6）
-        return Shown(question=question)
-    cards = [Card(title=citation_title(p, cid), body=p.chunks_by_id[cid].body,
+        return Shown(question=question, synonyms_applied=v.synonyms_applied)
+    cards = [Card(title=citation_title(p, cid), body=p.display_body(cid),   # 論点②: 項に分けた条は条全体
                   pdf=p.source_pdf(cid), loc=p.chunks_by_id[cid].pdf_loc)
              for cid in v.citations]
-    return Shown(question=question, answered=True, answer=v.answer, cards=cards)
+    return Shown(question=question, answered=True, answer=v.answer, cards=cards,
+                 synonyms_applied=v.synonyms_applied)
 
 
 def render_result(r: Shown) -> None:
     st.divider()
     st.markdown(f"**ご質問**　{plain(r.question)}")
+    if r.synonyms_applied:
+        # 論点6: 言い換え対応表で置き換えたことを必ず見せる
+        st.caption("言い換え対応表により、" + "、".join(
+            f"「{a.split('→')[0]}」を「{a.split('→')[1]}」" for a in r.synonyms_applied) + "として検索しました。")
     if r.error:
         st.error("回答システムに接続できませんでした。時間をおいて、もう一度お試しください。")
         return
@@ -217,75 +185,6 @@ def employee_tab() -> None:
         render_result(r)
 
 
-# --- 管理者タブ（要件 §3.7） ---
-
-def admin_tab() -> None:
-    p = get_pipeline()
-    # 質問処理中でも待たされないよう、読み取りは別接続で行う
-    conn = db.connect(p.db_path)
-    try:
-        counts = db.verdict_counts(conn)
-        unanswered = db.unanswered_summary(conn)
-        answered = db.answered_list(conn)
-        documents = db.documents_summary(conn)
-    finally:
-        conn.close()
-
-    total = sum(counts.values())
-    rejected = total - counts.get("answered", 0)
-    c1, c2, c3 = st.columns(3)
-    c1.metric("質問数", total)
-    c2.metric("回答", counts.get("answered", 0))
-    c3.metric("棄却", rejected)
-    if rejected:
-        st.caption("棄却の内訳: " + " ／ ".join(
-            f"{VERDICT_LABELS.get(k, k)} {n}件" for k, n in sorted(counts.items()) if k != "answered"))
-
-    st.subheader("未整備質問一覧")
-    st.caption("規程に該当する条文が見つからなかった質問。発生回数の多い順。")
-    rows = [{"質問": r.question, "発生回数": r.count, "直近日時": r.last_asked,
-             "判定": "、".join(VERDICT_LABELS.get(v, v) for v in r.verdicts.split(","))}
-            for r in unanswered]
-    if rows:
-        st.dataframe(rows, hide_index=True, width="stretch")
-        st.download_button("CSV をダウンロード", to_csv(rows), "未整備質問一覧.csv",
-                           "text/csv", key="dl_unanswered")
-    else:
-        st.write("まだありません。")
-
-    st.subheader("回答済み質問一覧")
-    st.caption("回答の妥当性を総務ご担当者が確認するための一覧。新しい順。")
-    rows = [{"日時": r.asked_at, "質問": r.question, "回答": r.answer,
-             "引用条文": " ／ ".join(citation_title(p, c) for c in r.citations),
-             "応答時間(秒)": round(r.latency_ms / 1000, 1)}
-            for r in answered]
-    if rows:
-        st.dataframe(rows, hide_index=True, width="stretch")
-        st.download_button("CSV をダウンロード", to_csv(rows), "回答済み質問一覧.csv",
-                           "text/csv", key="dl_answered")
-    else:
-        st.write("まだありません。")
-
-    st.subheader("取込状況")
-    rows = [{"規程名": d.name, "条文": d.articles, "表": d.tables, "施行日": d.effective_date,
-             "取込日時": d.ingested_at, "取り込めなかった画像": d.image_count,
-             "元ファイル": d.source_file, "原本PDF": d.source_pdf or "未登録",
-             "原本で位置を特定": f"{d.located}/{d.articles + d.tables}" if d.source_pdf else "-"}
-            for d in documents]
-    if rows:
-        st.dataframe(rows, hide_index=True, width="stretch")
-    else:
-        st.write("登録済みの規程がありません。`uv run python -m minidx.ingest` で取り込んでください。")
-    st.caption("規程を取り込み直したら、下のボタンで画面側の条文データを読み直してください。")
-    if st.button("条文データを再読み込み"):
-        get_pipeline.clear()
-        st.rerun()
-
-
 st.set_page_config(page_title=cfg["ui"]["title"], layout="centered")
 st.title(cfg["ui"]["title"])
-tab_employee, tab_admin = st.tabs(["質問する", "管理者"])
-with tab_employee:
-    employee_tab()
-with tab_admin:
-    admin_tab()
+employee_tab()

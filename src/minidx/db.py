@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from .models import Chunk, PdfLocation
+from .synonyms import Synonym
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS documents (
@@ -36,6 +37,10 @@ CREATE TABLE IF NOT EXISTS query_log (
   top_cos REAL, top_bm25 REAL, vocab_hit INTEGER,
   retrieved_chunk_ids TEXT, answer TEXT, citations TEXT,
   latency_ms INTEGER, tau_cos REAL);   -- その時点の閾値も残す。後から再判定できる
+-- 言い換え対応表（2026-11-09 論点6）。管理画面で編集する。規程を取り込み直しても消えない
+CREATE TABLE IF NOT EXISTS synonyms (
+  id INTEGER PRIMARY KEY, term TEXT NOT NULL UNIQUE, replacement TEXT NOT NULL,
+  note TEXT DEFAULT '', updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
 """
 
 
@@ -55,7 +60,9 @@ def connect(path: Path) -> sqlite3.Connection:
 # 後から足した列。CREATE TABLE IF NOT EXISTS は既存のテーブルに列を足さないため、ここで補う
 _ADDED_COLUMNS = [("documents", "source_pdf", "TEXT"), ("chunks", "pdf_loc", "TEXT"),
                   # 2026-11-09 論点5: 取込のたびに全件作り直すとチャンク番号が振り直されるため、引用を文字でも残す
-                  ("query_log", "citation_labels", "TEXT")]
+                  ("query_log", "citation_labels", "TEXT"),
+                  # 論点6: 言い換え対応表で置き換えた語（「泊まり→宿泊」）。置き換え後に何が起きたかを追えるようにする
+                  ("query_log", "synonyms_applied", "TEXT")]
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
@@ -136,14 +143,15 @@ def document_pdfs(conn: sqlite3.Connection) -> dict[int, str]:
 def log_query(conn: sqlite3.Connection, v, tau_cos: float) -> None:
     conn.execute(
         "INSERT INTO query_log(question, verdict, top_cos, top_bm25, vocab_hit,"
-        " retrieved_chunk_ids, answer, citations, latency_ms, tau_cos, citation_labels)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        " retrieved_chunk_ids, answer, citations, latency_ms, tau_cos, citation_labels, synonyms_applied)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
         (v.question, v.verdict, v.top_cos,
          max((h.bm25 for h in v.hits), default=0.0),
          1 if v.verdict != "rejected_no_vocab" else 0,
          json.dumps([h.chunk.id for h in v.hits]), v.answer,
          json.dumps(v.citations), v.latency_ms, tau_cos,
-         json.dumps(v.citation_labels, ensure_ascii=False)))
+         json.dumps(v.citation_labels, ensure_ascii=False),
+         json.dumps(v.synonyms_applied, ensure_ascii=False)))
     conn.commit()
 
 
@@ -220,3 +228,28 @@ def answered_list(conn: sqlite3.Connection) -> list[AnsweredRow]:
     return [AnsweredRow(asked_at=r["asked_at"], question=r["question"], answer=r["answer"] or "",
                         citations=json.loads(r["citations"] or "[]"), latency_ms=r["latency_ms"] or 0)
             for r in rows]
+
+
+# --- 言い換え対応表（2026-11-09 論点6） ---
+
+def load_synonyms(conn: sqlite3.Connection) -> list[Synonym]:
+    rows = conn.execute("SELECT term, replacement, COALESCE(note, '') AS note FROM synonyms ORDER BY term").fetchall()
+    return [Synonym(term=r["term"], replacement=r["replacement"], note=r["note"]) for r in rows]
+
+
+def save_synonyms(conn: sqlite3.Connection, rows: list[Synonym]) -> None:
+    """対応表を丸ごと置き換える（管理画面の表の内容がそのまま正になる）。検査は呼び出し側（synonyms.validate）。"""
+    with conn:
+        conn.execute("DELETE FROM synonyms")
+        conn.executemany("INSERT INTO synonyms(term, replacement, note) VALUES (?,?,?)",
+                         [(r.term, r.replacement, r.note) for r in rows])
+
+
+def corpus_signature(conn: sqlite3.Connection) -> str:
+    """登録済みの規程が変わったかを判定する目印。社員画面はこれが変わったら条文データを読み直す（論点7）。
+
+    管理画面を別アプリに分けたため、管理画面から社員画面のキャッシュを直接消せない。
+    質問ログの書き込みでは変わらない値（規程の件数と最新の取込日時）を使う。
+    """
+    r = conn.execute("SELECT COUNT(*) AS n, COALESCE(MAX(ingested_at), '') AS t FROM documents").fetchone()
+    return f"{r['n']}:{r['t']}"

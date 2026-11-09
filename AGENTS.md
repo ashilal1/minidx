@@ -1,7 +1,7 @@
 # minidx — 社内規程AI確認システム
 
 株式会社大和田測量設計「ミニDX化支援業務」。会津大学チームによる MVP 開発リポジトリ。
-社内規程PDFを取り込み、社員の自然文質問に対して**登録済み条文だけを根拠に**回答する。
+社内規程（Word）を取り込み、社員の自然文質問に対して**登録済み条文だけを根拠に**回答する。
 
 ## 0. このプロジェクトの絶対条件
 
@@ -29,7 +29,7 @@
 | 領域 | 採用 |
 |---|---|
 | Python | 3.12（`uv` で固定。環境の 3.14 は使わない） |
-| LLM | Ollama `qwen2.5:7b`（localhost:11434） |
+| LLM | Ollama `qwen2.5:3b`（localhost:11434）。2026-11-09 に 7b から仮変更（8GB 機で 7b がタイムアウト）。回答可能質問がそろったら評価で最終決定する |
 | 埋め込み | Ollama `bge-m3`（1024次元） |
 | ベクトル検索 | numpy 全件総当たり（**ベクトルDBは導入しない**） |
 | 語彙検索 | `rank_bm25` + `fugashi` / `unidic-lite` |
@@ -53,7 +53,8 @@
 docs/            要件・受領資料（受領資料は編集禁止）
 docs/log/        作業ログ。1日1ファイル（§7）
 src/minidx/      ingest / split / retrieve / gate / generate / db
-app.py           Streamlit（社員タブ / 管理者タブ）
+app.py           Streamlit 社員画面
+admin.py         Streamlit 管理画面（別アプリ。設置 PC の上でだけ開く。2026-11-09 分離）
 config.yaml      閾値・k・モデル名などの可変パラメータ
 eval/            評価セット（回答可能15問 / 回答不能15問）と実行スクリプト
 tests/           pytest
@@ -70,7 +71,8 @@ uv run python -m minidx.ingest            # regulations/*.docx → Markdown → 
 uv run python -m minidx.ask "質問文"       # CLI で質疑応答（ゲート挙動の確認用）
 uv run python -m minidx.eval              # 評価セット実行。誤回答率を出す
 uv run pytest                             # テスト
-uv run streamlit run app.py --server.port 8501 --server.headless true
+uv run streamlit run app.py --server.port 8501 --server.headless true           # 社員画面（LAN 利用時は --server.address 0.0.0.0）
+uv run streamlit run admin.py --server.port 8502 --server.address 127.0.0.1    # 管理画面
 cloudflared tunnel --url http://localhost:8501   # 公開（§7 の運用ルール厳守）
 ```
 
@@ -90,6 +92,8 @@ cloudflared tunnel --url http://localhost:8501   # 公開（§7 の運用ルー�
 - `data/` 配下（実規程PDF・Markdown・DB）は**コミットしない**。
 - `.streamlit/secrets.toml` にパスワードを**ハッシュ値で**保持。平文禁止、git管理外。社員用と管理者用でパスワードを分ける。
 - 規程本文・質問ログを外部サービスへ送信しない（WebFetch / curl でのアップロードを含む）。
+  開発支援の AI ツール（ChatGPT・Claude など）に規程本文を読ませない。評価の回答可能質問は人が手元で規程を読んで書く。
+- コード・テスト・設定・文書（git 管理下）に規程の金額や本文を書かない。テストは架空のデータで書く。
 - 未認証時の Streamlit は `st.stop()` で UI もデータも一切描画しない。タブやサイドバーの存在も見せない。
 - Cloudflare Tunnel は TLS がエッジで終端される。**客先の事前承諾なしに実規程を載せない**。承諾が取れるまではダミー規程で公開する。
 
@@ -106,9 +110,9 @@ cloudflared tunnel --url http://localhost:8501   # 公開（§7 の運用ルー�
 
 ## 8. 進行
 
-- 期限: **2026/10/5（月）MTG でのデモ**。バッファは 10/3 の1日のみ。
+- 最終納品・成果発表: **2027年1〜2月**（2026-11-08 確認）。10/5 MTG のデモは終了。次回 MTG は 11/9（月）14:00。
 - 遅延時に削るのは管理者画面の CSV エクスポート（F-07）から。**棄却ゲート（F-04）と評価（§5.2）は何があっても削らない**。
-- 作業ブランチ: `feat/MVP`。コミットメッセージは日本語、`docs:` / `feat:` / `fix:` の prefix を付ける。
+- 作業ブランチ: `feat/revision`（develop から分岐。2026-11-09〜）。コミットメッセージは日本語、`docs:` / `feat:` / `fix:` の prefix を付ける。
 - `git push` とタグ付けは指示があるまで行わない。
 
 ## 9. エージェントへの指示

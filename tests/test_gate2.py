@@ -75,11 +75,19 @@ def test_article_number_is_not_treated_as_quantity():
     assert run("第5条により帰着後7日以内です。", [1], ARTICLE)[0] is True
 
 
-def test_one_char_label_is_ignored():
-    # 1文字の語は行ラベルにしない（table_label_min_chars）。誤一致を避けるため
+def test_one_char_cell_label_is_used():
+    # 職級を漢字1文字で略記した表（セル全体が1文字）。回答の「甲種」の中の「甲」と照合する
     one = Chunk(id=4, locator="第7条 表1", heading="", kind="table",
                 body="区分: 甲、手当: ¥3,300\n区分: 乙、手当: ¥2,200")
-    assert run("甲は¥2,200です。", [1], one)[0] is True
+    assert run("甲種は¥3,300、乙種は¥2,200です。", [1], one)[0] is True
+    assert run("甲種は¥2,200です。", [1], one)[1] == "rejected_table_row"
+
+
+def test_one_char_split_part_is_not_a_label():
+    # 「・」で区切った1文字の部分はラベルにしない（偶然の一致を避ける）。セル全体「丙・丁」はラベルになる
+    t = Chunk(id=5, locator="第7条 表2", heading="", kind="table",
+              body="区分: 丙・丁、手当: ¥1,100\n区分: 戊地、手当: ¥900")
+    assert run("丁の場合も¥900です。", [1], t)[0] is True   # 「丁」単独はラベルではないので照合しない
 
 
 def test_number_must_be_in_cited_chunk_not_just_retrieved():
@@ -120,3 +128,33 @@ def test_number_without_label_is_checked_only_by_presence():
 
 def test_label_in_previous_sentence_does_not_bind():
     assert run("甲地の手当があります。金額は¥2,200の場合もあります。", [1], TABLE)[0] is True
+
+
+def test_label_split_across_two_columns():
+    # 職級名を2列に分けて書いた表（「主」+「任」=「主任」、「係」+「任」=「係任」）。2列目の共通の字に引きずられない
+    t = Chunk(id=6, locator="第7条 表3", heading="", kind="table",
+              body="職級: 主、職級: 任、手当: ¥3,300\n職級: 係、職級: 任、手当: ¥2,200\n"
+                   "職級: 一般職、職級: 一般職、手当: ¥1,100")
+    assert run("主任は¥3,300、係任は¥2,200、一般職は¥1,100です。", [1], t)[0] is True
+    assert run("主任は¥2,200です。", [1], t)[1] == "rejected_table_row"
+
+
+def test_amount_before_label_in_same_segment():
+    # 数が先、区分名が後の書き方
+    assert run("¥3,300（甲地）、¥2,200（乙地）です。", [1], TABLE)[0] is True
+
+
+def test_neighbor_label_does_not_rescue_wrong_amount():
+    # 「甲地: ¥2,200、乙地: ¥1,100」はどちらも1行ずれている。隣の区分名と合っても通さない
+    assert run("甲地: ¥2,200、乙地: ¥1,100", [1], TABLE)[1] == "rejected_table_row"
+
+
+def test_short_label_inside_longer_label_is_ignored():
+    # 「主任技師」の中の「技師」を別の区分として数えない
+    assert run("主任技師: 9,100円", [1], TABLE_NAMED)[0] is True
+
+
+def test_fullwidth_comma_separates_items_but_not_thousands():
+    # 全角カンマで区分を並べた回答。「¥3,300」の3桁区切りでは区切らない
+    assert run("甲地: ¥3,300，乙地: ¥2,200，丙地・丁地: ¥1,100", [1], TABLE)[0] is True
+    assert run("甲地: ¥2,200，乙地: ¥3,300", [1], TABLE)[1] == "rejected_table_row"
