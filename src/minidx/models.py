@@ -35,16 +35,19 @@ class Chunk:
     document_id: int = 0
     id: int = 0
     pdf_loc: PdfLocation | None = None   # 原本PDFが無い、または特定できなかったときは None
+    doc_name: str = ""    # 規程名（改訂日を含まない）。検索用テキストの先頭に付ける
 
     @property
     def search_text(self) -> str:
         """検索用テキスト。
 
-        表の行（「職級: 部長、日当: ¥2,300」）は単体では質問と意味的に遠い。
+        表の行（「職級: 主任、手当: ¥9,999」のような形）は単体では質問と意味的に遠い。
         所属条文の見出しと導入文を足さないと、金額の入った行が検索に上がってこない。
         表示は body のみなので、文脈の付与が原文表示を汚すことはない。
         """
-        return f"{self.heading} {self.context} {self.body}".strip()
+        # 2026-11-09 論点3: 規程名と条番号を先頭に付ける。約15本になると「手当」「退職」が複数の規程に出るため、
+        # 規程名の語（通勤手当・退職金など）が質問に出たときの手がかりにする。社員が規程名を知っている必要はない
+        return f"{self.doc_name} {self.locator} {self.heading} {self.context} {self.body}".strip()
 
 
 @dataclass
@@ -60,9 +63,11 @@ class Verdict:
     """1問の処理結果。全経路を query_log に残すため、棄却理由を分けて持つ。"""
     verdict: str          # answered / rejected_low_score / rejected_no_vocab
                           # / rejected_insufficient / rejected_bad_citation
+                          # / rejected_bad_number / rejected_table_row / rejected_generation_error（2026-11-09 追加）
     question: str
     answer: str = ""
     citations: list[int] = field(default_factory=list)   # chunk.id
+    citation_labels: list[str] = field(default_factory=list)   # 「規程名（改訂日） 条番号」。再取込後も追える
     hits: list[Hit] = field(default_factory=list)
     top_cos: float = 0.0
     reason: str = ""

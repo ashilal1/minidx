@@ -41,6 +41,9 @@ VERDICT_LABELS = {
     "rejected_no_vocab": "棄却（規程に無い語）",
     "rejected_insufficient": "棄却（LLMが根拠不足と申告）",
     "rejected_bad_citation": "棄却（引用の検証に失敗）",
+    "rejected_bad_number": "棄却（回答の数が条文に無い）",
+    "rejected_table_row": "棄却（表の行の取り違え）",
+    "rejected_generation_error": "棄却（生成の失敗・時間切れ）",
 }
 
 
@@ -66,7 +69,12 @@ class Shown:
 @st.cache_resource
 def get_pipeline() -> Pipeline:
     """条文・埋め込み・BM25 索引はプロセスで1つだけ持つ。再取込後は管理者タブから読み直す。"""
-    return Pipeline()
+    p = Pipeline()
+    try:
+        p.client.warmup()   # 論点4: 社員の最初の質問で読み込みを待たせない
+    except Exception as e:  # 読み込めなくても画面は出す。質問時に生成が失敗すれば棄却として扱われる
+        st.warning(f"AI モデルの事前読み込みに失敗しました（{type(e).__name__}）。Ollama が起動しているか確認してください。")
+    return p
 
 
 @st.cache_resource

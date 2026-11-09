@@ -37,38 +37,19 @@ def build_schema(n: int) -> dict:
     }
 
 
-SYSTEM = """あなたは社内規程の内容だけを答える案内係です。次の規則を必ず守ってください。
-
-1. 以下に示した条文以外の知識を使用してはならない。
-2. 一般的な労働基準法や世間の慣行に基づく補足を行ってはならない。
-3. sufficient を false にしてよいのは、**示された条文にその事項の記載がない場合だけ**である。
-4. 条文に職級・区分・条件による場合分けがある場合は、
-   **場合分けごとにすべて列挙して回答する**こと。
-   質問が特定の条件（職級など）を指定していないことは、false にする理由にならない。
-   **場合分けを列挙して回答できたなら、sufficient は true である。**
-5. citation_ids には、根拠とした条文の番号（[1] などの番号）だけを入れること。
-6. 回答に金額を書く場合、その金額は citation_ids で挙げた条文の中に必ず書かれていなければならない。
-   条文に無い金額を計算したり推測したりしてはならない。
-7. 出力は citation_ids → answer → sufficient の順に組み立てること。
-   まず根拠となる条文を挙げ、次にその条文だけを使って回答を書き、
-   最後に「その回答が挙げた条文だけで成り立っているか」を sufficient で答える。
-
-条文:
-{context}
-
-質問: {question}
-"""
+# プロンプト本文は config.yaml の prompt.system（AGENTS.md §5）
 
 
-def build_prompt(question: str, hits: list[Hit]) -> str:
+def build_prompt(question: str, hits: list[Hit], template: str) -> str:
     lines = []
     for i, h in enumerate(hits, start=1):
         head = f"[{i}] {h.chunk.locator}"
         if h.chunk.heading:
             head += f" {h.chunk.heading}"
         lines.append(f"{head}\n{h.chunk.body}")
-    return SYSTEM.format(context="\n\n".join(lines), question=question)
+    return template.format(context="\n\n".join(lines), question=question)
 
 
-def generate(client: Ollama, question: str, hits: list[Hit]) -> tuple[dict, dict[str, int]]:
-    return client.generate_json(build_prompt(question, hits), build_schema(len(hits)))
+def generate(client: Ollama, question: str, hits: list[Hit],
+             template: str) -> tuple[dict, dict[str, int]]:
+    return client.generate_json(build_prompt(question, hits, template), build_schema(len(hits)))

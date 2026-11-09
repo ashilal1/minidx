@@ -6,7 +6,7 @@ from pathlib import Path
 
 from . import db
 from .config import REGULATIONS_DIR, ROOT, load
-from .gate import gate1, gate2
+from .gate import NumberMatcher, gate1, gate2
 from .generate import generate
 from .models import Verdict
 from .ollama import Ollama
@@ -32,6 +32,7 @@ class Pipeline:
             rrf_k=self.cfg["retrieve"]["rrf_k"],
             max_per_article=self.cfg["retrieve"]["max_chunks_per_article"])
         self.client = Ollama(self.cfg)
+        self.matcher = NumberMatcher(self.cfg["gate"]["number_units"])
 
     def ask(self, question: str, *, log: bool = True,
             on_step: Callable[[str], None] | None = None) -> Verdict:
@@ -54,15 +55,22 @@ class Pipeline:
 
         # --- 生成 ---
         step("generate")
-        out, _stats = generate(self.client, question, hits)
+        try:
+            out, _stats = generate(self.client, question, hits, self.cfg["prompt"]["system"])
+        except Exception as e:  # 時間切れ・JSON の破損など。論点4: 待たせるより断る（未検証の条文は見せない）
+            v = Verdict(verdict="rejected_generation_error", question=question, hits=hits,
+                        top_cos=top_cos, reason=f"生成に失敗: {type(e).__name__}")
+            return self._finish(v, t0, log)
 
         # --- ゲート2: LLMの自己申告を最終判定に使わない ---
         step("verify")
-        ok, verdict, reason, chunk_ids = gate2(out, hits)
+        ok, verdict, reason, chunk_ids = gate2(
+            out, hits, self.matcher, self.cfg["gate"]["table_label_min_chars"])
         v = Verdict(verdict=verdict, question=question, hits=hits, top_cos=top_cos,
                     reason=reason,
                     answer=out.get("answer", "") if ok else "",
-                    citations=chunk_ids if ok else [])
+                    citations=chunk_ids if ok else [],
+                    citation_labels=[self.citation_label(c) for c in chunk_ids] if ok else [])
         return self._finish(v, t0, log)
 
     def _finish(self, v: Verdict, t0: float, log: bool) -> Verdict:

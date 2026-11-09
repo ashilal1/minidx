@@ -53,7 +53,9 @@ def connect(path: Path) -> sqlite3.Connection:
 
 
 # 後から足した列。CREATE TABLE IF NOT EXISTS は既存のテーブルに列を足さないため、ここで補う
-_ADDED_COLUMNS = [("documents", "source_pdf", "TEXT"), ("chunks", "pdf_loc", "TEXT")]
+_ADDED_COLUMNS = [("documents", "source_pdf", "TEXT"), ("chunks", "pdf_loc", "TEXT"),
+                  # 2026-11-09 論点5: 取込のたびに全件作り直すとチャンク番号が振り直されるため、引用を文字でも残す
+                  ("query_log", "citation_labels", "TEXT")]
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
@@ -77,10 +79,16 @@ def from_blob(blob: bytes) -> np.ndarray:
     return np.frombuffer(blob, dtype=np.float32)
 
 
-def replace_document(conn: sqlite3.Connection, *, name: str, doc_type: str,
-                     source_file: str, source_format: str, image_count: int,
-                     source_pdf: str = "", version: str = "", effective_date: str = "") -> int:
-    conn.execute("DELETE FROM documents WHERE name = ?", (name,))
+def clear_documents(conn: sqlite3.Connection) -> None:
+    """規程とチャンクを全件消す（ON DELETE CASCADE）。2026-11-09 論点5: regulations/ の中身＝現行版とし、
+    取込のたびに作り直すことで旧版やフォルダから消した規程が検索に残る経路を断つ。
+    呼び出し側はトランザクションの中で、続けて全規程を登録すること。"""
+    conn.execute("DELETE FROM documents")
+
+
+def insert_document(conn: sqlite3.Connection, *, name: str, doc_type: str,
+                    source_file: str, source_format: str, image_count: int,
+                    source_pdf: str = "", version: str = "", effective_date: str = "") -> int:
     cur = conn.execute(
         "INSERT INTO documents(name, doc_type, version, effective_date,"
         " source_file, source_format, image_count, source_pdf) VALUES (?,?,?,?,?,?,?,?)",
@@ -103,15 +111,19 @@ def load_all(conn: sqlite3.Connection) -> tuple[list[Chunk], np.ndarray, dict[in
     """全チャンクと埋め込み行列を返す。2,000件×1024次元でも約8MB。起動時に丸ごと載せる。"""
     rows = conn.execute(
         "SELECT c.id, c.document_id, c.locator, c.heading, c.body, c.kind, c.context, c.embedding,"
-        " c.pdf_loc, d.name AS doc_name FROM chunks c JOIN documents d ON d.id = c.document_id"
+        " c.pdf_loc, d.name AS doc_name, d.version AS doc_version"
+        " FROM chunks c JOIN documents d ON d.id = c.document_id"
         " ORDER BY c.id").fetchall()
     chunks = [Chunk(id=r["id"], document_id=r["document_id"], locator=r["locator"],
                     heading=r["heading"] or "", body=r["body"], kind=r["kind"], context=r["context"] or "",
-                    pdf_loc=PdfLocation.from_json(r["pdf_loc"]) if r["pdf_loc"] else None)
+                    pdf_loc=PdfLocation.from_json(r["pdf_loc"]) if r["pdf_loc"] else None,
+                    doc_name=r["doc_name"])
               for r in rows]
     matrix = (np.vstack([from_blob(r["embedding"]) for r in rows])
               if rows else np.zeros((0, 1024), dtype=np.float32))
-    doc_names = {r["id"]: r["doc_name"] for r in rows}
+    # 画面・ログ用の表示名。改訂日がある規程は「旅費規程（2025.11.19改訂）」のように付けて見せる
+    doc_names = {r["id"]: f"{r['doc_name']}（{r['doc_version']}）" if r["doc_version"] else r["doc_name"]
+                 for r in rows}
     return chunks, matrix, doc_names
 
 
@@ -124,13 +136,14 @@ def document_pdfs(conn: sqlite3.Connection) -> dict[int, str]:
 def log_query(conn: sqlite3.Connection, v, tau_cos: float) -> None:
     conn.execute(
         "INSERT INTO query_log(question, verdict, top_cos, top_bm25, vocab_hit,"
-        " retrieved_chunk_ids, answer, citations, latency_ms, tau_cos)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?)",
+        " retrieved_chunk_ids, answer, citations, latency_ms, tau_cos, citation_labels)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (v.question, v.verdict, v.top_cos,
          max((h.bm25 for h in v.hits), default=0.0),
          1 if v.verdict != "rejected_no_vocab" else 0,
          json.dumps([h.chunk.id for h in v.hits]), v.answer,
-         json.dumps(v.citations), v.latency_ms, tau_cos))
+         json.dumps(v.citations), v.latency_ms, tau_cos,
+         json.dumps(v.citation_labels, ensure_ascii=False)))
     conn.commit()
 
 

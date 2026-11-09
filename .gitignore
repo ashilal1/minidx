@@ -3,6 +3,7 @@
 regulations/
 data/raw/
 data/markdown/
+eval/results/
 *.db
 *.sqlite3
 
